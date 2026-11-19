@@ -98,4 +98,16 @@ module.exports = async (probe) => {
   await untilFrame('document.body.innerText.includes("стрим (Quadro).mp4")', 10000);
   await shot(`${OUT}/convert-done.png`);
   log('CALLS', JSON.stringify(await js('window.__pcCalls')));
+
+  // 3) Ctrl+K: the package's commands are there; «Сжать видео или картинку» opens the Converter on its «Сжать» tab.
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true })) || true`);
+  await until(`document.body.innerText.includes('Сжать видео или картинку')`, 10000);
+  log('CTRL-K', JSON.stringify(await js(`['Конвертировать файл', 'Сжать видео или картинку', 'Обрезать видео, в GIF, без звука', 'Готовые файлы Конвертера'].filter((t) => document.body.innerText.includes(t))`)));
+  await shot(`${OUT}/convert-ctrlk.png`);
+  await js(`(() => { const el = [...document.querySelectorAll('[cmdk-item], [role="option"], button, a')].find((x) => x.textContent.trim().startsWith('Сжать видео или картинку')); if (!el) return false; el.click(); return true; })()`);
+  await until(`location.pathname === '/p/quadro.convert/compress'`, 10000);
+  await wait(1500);
+  await untilFrame('document.body.innerText.includes("Сжать файлы")', 20000);
+  log('OPENED', JSON.stringify(await js('location.pathname')), JSON.stringify(await inFrame(`document.querySelector('[role="tab"][aria-selected="true"]').textContent`)));
+  await shot(`${OUT}/convert-compress-tab.png`);
 };

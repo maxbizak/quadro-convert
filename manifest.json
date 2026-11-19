@@ -4,17 +4,23 @@
   "name": "Конвертер",
   "summary": "Видео, аудио и картинки в любой формат — на вашем ПК",
   "description": "Конвертирует, сжимает, обрезает видео, делает GIF и вынимает звук. Всё делается на вашем компьютере движком FFmpeg — файлы не уходят в интернет. Права: выбрать файлы (окно Windows), показать результат в папке и открыть его, свою папку данных (история заданий) и запуск FFmpeg, который ставится вместе с приложением.",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "icon": "file-text",
-  "engines": { "hub": "^2.0" },
+  "engines": {
+    "hub": "^2.0"
+  },
   "license": "proprietary",
   "madeByAi": "mostly",
   "parts": {
     "client": "client",
     "pc": {
       "entry": "pc/part.cjs",
-      "platforms": ["win32-x64"],
-      "activation": ["onScreen"],
+      "platforms": [
+        "win32-x64"
+      ],
+      "activation": [
+        "onScreen"
+      ],
       "downloads": [
         {
           "id": "ffmpeg",
@@ -26,9 +32,124 @@
       ]
     }
   },
-  "permissions": ["pc.files.own", "pc.files.pick", "pc.files.reveal", "pc.files.open", "pc.process"],
-  "views": { "main": { "surface": "web", "title": "Конвертер", "entry": "index.html" } },
+  "permissions": [
+    "pc.files.own",
+    "pc.files.pick",
+    "pc.files.reveal",
+    "pc.files.open",
+    "pc.process"
+  ],
+  "views": {
+    "main": {
+      "surface": "web",
+      "title": "Конвертер",
+      "entry": "index.html"
+    },
+    "compress": {
+      "surface": "web",
+      "title": "Сжать",
+      "entry": "index.html"
+    },
+    "video": {
+      "surface": "web",
+      "title": "Видео",
+      "entry": "index.html"
+    },
+    "done": {
+      "surface": "web",
+      "title": "Готовое",
+      "entry": "index.html"
+    }
+  },
   "contributes": {
-    "shell.railApp@1": [{ "id": "main", "title": "Конвертер", "icon": "file-text", "open": { "view": "main" } }]
+    "shell.railApp@1": [
+      {
+        "id": "main",
+        "title": "Конвертер",
+        "icon": "file-text",
+        "open": {
+          "view": "main"
+        },
+        "menu": [
+          "compress",
+          "video",
+          "done"
+        ]
+      }
+    ],
+    "shell.command@1": [
+      {
+        "id": "convert",
+        "title": "Конвертировать файл",
+        "icon": "file-text",
+        "category": "Конвертер",
+        "keywords": [
+          "конвертер",
+          "mp4",
+          "mp3",
+          "webm",
+          "png",
+          "jpg",
+          "webp",
+          "формат",
+          "convert"
+        ],
+        "run": {
+          "kind": "open",
+          "view": "main"
+        }
+      },
+      {
+        "id": "compress",
+        "title": "Сжать видео или картинку",
+        "icon": "file-text",
+        "category": "Конвертер",
+        "keywords": [
+          "сжать",
+          "уменьшить",
+          "размер",
+          "discord",
+          "telegram",
+          "compress"
+        ],
+        "run": {
+          "kind": "open",
+          "view": "compress"
+        }
+      },
+      {
+        "id": "video",
+        "title": "Обрезать видео, в GIF, без звука",
+        "icon": "file-text",
+        "category": "Конвертер",
+        "keywords": [
+          "обрезать",
+          "gif",
+          "гиф",
+          "звук",
+          "повернуть",
+          "trim"
+        ],
+        "run": {
+          "kind": "open",
+          "view": "video"
+        }
+      },
+      {
+        "id": "done",
+        "title": "Готовые файлы Конвертера",
+        "icon": "file-text",
+        "category": "Конвертер",
+        "keywords": [
+          "готовое",
+          "результат",
+          "конвертер"
+        ],
+        "run": {
+          "kind": "open",
+          "view": "done"
+        }
+      }
+    ]
   }
 }

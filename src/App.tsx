@@ -65,11 +65,16 @@ export function App() {
       </main>
     );
   }
-  return <ConvertScreen />;
+  return <ConvertScreen initialTab={tabOf(ctx.view)} />;
 }
 
-function ConvertScreen() {
-  const [tab, setTab] = useState<Tab>('convert');
+/** The manifest's view this frame shows (a command of Ctrl+K or the rail's menu) → the tab it opens on. */
+function tabOf(view: string | undefined): Tab {
+  return view === 'compress' || view === 'video' || view === 'done' ? view : 'convert';
+}
+
+function ConvertScreen({ initialTab = 'convert' }: { initialTab?: Tab }) {
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [engine, setEngine] = useState<Engine | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
