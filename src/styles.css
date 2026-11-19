@@ -1,0 +1,204 @@
+/* «Конвертер» on top of Hub's kit (/pkg-sdk/v1/quadro-ui.css): colours only from the theme's tokens. */
+.cv {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.cv header p {
+  margin: 0;
+}
+
+.cv-accent {
+  color: var(--color-brand-text);
+}
+
+.cv-strong {
+  color: var(--color-foreground);
+  font-weight: 500;
+}
+
+.cv-error {
+  margin: 0;
+  color: var(--color-destructive-text);
+  font-size: 12px;
+}
+
+.cv-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cv-tab {
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  font: 14px var(--font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cv-tab:hover {
+  color: var(--color-foreground);
+}
+
+.cv-tab[aria-selected='true'] {
+  border-bottom-color: var(--color-brand);
+  color: var(--color-foreground);
+  font-weight: 600;
+}
+
+.cv-tab:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: -2px;
+}
+
+.cv-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-color: var(--color-warning);
+}
+
+.cv-alert {
+  border-color: var(--color-warning);
+}
+
+.cv-icon {
+  width: 32px;
+  padding: 0;
+}
+
+.cv-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cv-end {
+  align-items: flex-end;
+}
+
+.cv-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cv-between h2 {
+  margin: 0;
+}
+
+.cv .q-btn[aria-pressed='true'] {
+  border-color: var(--color-brand);
+  color: var(--color-brand-text);
+}
+
+.cv-drop,
+.cv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.cv-drop h2,
+.cv-empty h2 {
+  margin: 4px 0 0;
+}
+
+.cv-drop .q-btn {
+  margin-top: 8px;
+}
+
+.cv-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.cv-boxed {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.cv-grow {
+  flex: 1;
+  min-width: 160px;
+}
+
+.cv-name {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-search {
+  width: 96px;
+}
+
+.cv-format {
+  width: 128px;
+}
+
+.cv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 400;
+}
+
+.cv-field .q-input {
+  width: 128px;
+}
+
+.cv-range {
+  width: 100%;
+  accent-color: var(--color-brand);
+}
+
+.cv-two {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 760px) {
+  .cv-two {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  }
+}
+
+.cv-job {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.cv-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-muted);
+}
+
+.cv-progress > div {
+  height: 100%;
+  background: var(--color-brand);
+}

@@ -1,0 +1,34 @@
+{
+  "manifest": 2,
+  "id": "quadro.convert",
+  "name": "Конвертер",
+  "summary": "Видео, аудио и картинки в любой формат — на вашем ПК",
+  "description": "Конвертирует, сжимает, обрезает видео, делает GIF и вынимает звук. Всё делается на вашем компьютере движком FFmpeg — файлы не уходят в интернет. Права: выбрать файлы (окно Windows), показать результат в папке и открыть его, свою папку данных (история заданий) и запуск FFmpeg, который ставится вместе с приложением.",
+  "version": "1.0.0",
+  "icon": "file-text",
+  "engines": { "hub": "^2.0" },
+  "license": "proprietary",
+  "madeByAi": "mostly",
+  "parts": {
+    "client": "client",
+    "pc": {
+      "entry": "pc/part.cjs",
+      "platforms": ["win32-x64"],
+      "activation": ["onScreen"],
+      "downloads": [
+        {
+          "id": "ffmpeg",
+          "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip",
+          "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+          "size": 114768076,
+          "unpack": "zip"
+        }
+      ]
+    }
+  },
+  "permissions": ["pc.files.own", "pc.files.pick", "pc.files.reveal", "pc.files.open", "pc.process"],
+  "views": { "main": { "surface": "web", "title": "Конвертер", "entry": "index.html" } },
+  "contributes": {
+    "shell.railApp@1": [{ "id": "main", "title": "Конвертер", "icon": "file-text", "open": { "view": "main" } }]
+  }
+}
