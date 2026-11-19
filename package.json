@@ -1,7 +1,7 @@
 {
   "name": "quadro-convert",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "«Конвертер» — пакет Quadro Hub (quadro.convert): экран в песочнице + часть на ПК с FFmpeg",
   "type": "module",
   "scripts": {
