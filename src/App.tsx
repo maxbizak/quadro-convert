@@ -470,7 +470,7 @@ function ConvertScreen() {
                     <div className="cv-name">{basename(job.outPath ?? job.path ?? job.id)}</div>
                     <div className="q-subtle">
                       {(job.op && OP_LABEL[job.op]) ?? 'Готово'} · {size(job.inSize)} → {size(job.outSize)}
-                      {job.inSize && job.outSize ? ` · ${Math.round((1 - job.outSize / job.inSize) * 100)}%` : ''}
+                      {job.inSize && job.outSize ? ` · ${job.outSize <= job.inSize ? '−' : '+'}${Math.abs(Math.round((1 - job.outSize / job.inSize) * 100))}%` : ''}
                     </div>
                   </div>
                   {job.outPath && (
