@@ -2,8 +2,8 @@ import { basename, dirname } from 'node:path';
 import type { Item, Job, Op } from './engine';
 
 // What «Конвертер» does from outside its screen (Hub's API, docs/v2/kernel.md §12ж and chat-apps.md §2):
-//  - actions over a video of Hub (shell.objectAction@1, run «pc», `match.ext` — the player of Hub tells no mime yet): the program downloads the file to
-//    «Загрузки\Quadro Hub» and gives it to the part as picked by the person — `{ object: { kind: 'file', title, path }, values }`;
+//  - actions over a video or a sound of Hub (shell.objectAction@1, run «pc», `match.mime` «video/*» / «audio/*»): the program downloads
+//    the file to «Загрузки\Quadro Hub» and gives it to the part as picked by the person — `{ object: { kind: 'file', title, facts, path }, values }`;
 //  - «/сжать» in personal messages (servers.command@1, handler «pc:»): the person picks the video in Windows' own window.
 // The program waits for a call at most 60 s, so the part answers at once `{ pending: jobId, message }` and tells the rest by its
 // events with that jobId: `job.progress { percent, message }`, then `job.done { message, kind }` or `job.failed { message }` —
@@ -17,8 +17,8 @@ export const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'opus', 'm4a', 'aac', 'flac', 'wm
 /** The target size of «Сжать…» and «/сжать» (МБ): Discord without Nitro — 10, Telegram — 2000 (its limit 2 ГБ). */
 export const TARGET_MB = { default: 10, min: 1, max: 4000 } as const;
 
-type Work = 'removeAudio' | 'compress' | 'extractAudio';
-const WORK: Record<Work, string> = { removeAudio: 'Убираю звук', compress: 'Сжимаю', extractAudio: 'Вынимаю звук' };
+type Work = 'removeAudio' | 'compress' | 'extractAudio' | 'convert';
+const WORK: Record<Work, string> = { removeAudio: 'Убираю звук', compress: 'Сжимаю', extractAudio: 'Вынимаю звук', convert: 'Перевожу в mp3' };
 
 /** A job started from outside the screen: what to say about it, and what to add to its last line. */
 export interface Followed {
@@ -38,14 +38,19 @@ export interface ActionDeps {
 
 type Values = Record<string, unknown>;
 
-/** The file of Hub the program gave with an action: its path (only a file, only with a path — anything else is refused). */
-export function objectFile(params: unknown): { path: string; title: string; values: Values } {
+/** The file of Hub the program gave with an action: its path (only a file, only with a path — anything else is refused) and mime. */
+export function objectFile(params: unknown): { path: string; title: string; mime: string; values: Values } {
   const p = params && typeof params === 'object' ? (params as { object?: unknown; values?: unknown }) : {};
-  const o = p.object && typeof p.object === 'object' ? (p.object as { kind?: unknown; path?: unknown; title?: unknown }) : {};
+  const o = p.object && typeof p.object === 'object' ? (p.object as { kind?: unknown; path?: unknown; title?: unknown; facts?: unknown }) : {};
   if (o.kind !== 'file' || typeof o.path !== 'string' || !o.path) throw new Error('Это действие работает с файлом в программе Quadro Hub');
   const values = p.values && typeof p.values === 'object' && !Array.isArray(p.values) ? (p.values as Values) : {};
-  return { path: o.path, title: typeof o.title === 'string' && o.title ? o.title : basename(o.path), values };
+  const facts = o.facts && typeof o.facts === 'object' ? (o.facts as { mime?: unknown }) : {};
+  const mime = typeof facts.mime === 'string' ? facts.mime.toLowerCase() : '';
+  return { path: o.path, title: typeof o.title === 'string' && o.title ? o.title : basename(o.path), mime, values };
 }
+
+/** Already mp3: by its mime (Hub's fact), else by the name of the downloaded file. */
+const isMp3 = (mime: string, path: string) => mime === 'audio/mpeg' || mime === 'audio/mp3' || /\.mp3$/i.test(path);
 
 /** The size asked in the form (Hub checked it against the manifest; the part checks again). */
 export function targetOf(values: Values): number {
@@ -101,11 +106,11 @@ export class JobEvents {
 }
 
 /** Starts one job, follows it, and answers at once: `{ pending, message }` (Hub keeps the notice until `job.done` / `job.failed`). */
-async function startFollowed(deps: ActionDeps, item: Item & { op: Work }, f: Followed): Promise<{ pending: string; message: string }> {
+async function startFollowed(deps: ActionDeps, item: Item & { op: Work }, f: Followed, message = `${workLine(f)}…`): Promise<{ pending: string; message: string }> {
   const { ids } = await deps.start([item]);
   const id = ids[0]!;
   deps.events.follow(id, f, deps.current(id));
-  return { pending: id, message: `${workLine(f)}…` };
+  return { pending: id, message };
 }
 
 /** The actions of the manifest (`run.method`) → the engine's operation. */
@@ -113,29 +118,31 @@ export const OBJECT_ACTIONS: Record<string, (values: Values) => { op: Op & Work;
   actMute: () => ({ op: 'removeAudio', params: {} }),
   actCompress: (values) => ({ op: 'compress', params: { mode: 'size', targetMB: targetOf(values) } }),
   actAudio: () => ({ op: 'extractAudio', params: { to: 'mp3' } }),
+  actToMp3: () => ({ op: 'convert', params: { to: 'mp3' } }),
 };
 
-/** An action over a file of Hub: `{ pending, message }` — the rest comes as the part's events `job.*`. */
-export async function objectAction(deps: ActionDeps, method: string, params: unknown): Promise<{ pending: string; message: string }> {
+/** An action over a file of Hub: `{ pending, message }` — the rest comes as the part's events `job.*`; nothing to do — `{ message, kind: 'info' }`. */
+export async function objectAction(deps: ActionDeps, method: string, params: unknown): Promise<{ pending: string; message: string } | { message: string; kind: 'info' }> {
   const make = OBJECT_ACTIONS[method];
   if (!make) throw new Error('Нет такого действия');
-  const { path, title, values } = objectFile(params);
+  const { path, title, mime, values } = objectFile(params);
+  // «audio/*» takes an mp3 too (Hub's match has no «but»): it stays as it is.
+  if (method === 'actToMp3' && isMp3(mime, path)) return { message: `«${title}» уже в mp3`, kind: 'info' };
   const { op, params: p } = make(values);
   return startFollowed(deps, { path, op, params: p }, { op, title });
 }
 
 /**
  * «/сжать» in a personal conversation: the person picks the video (Windows' window), it is compressed next to the original.
- * The answer is Hub's `{ pending, message }`; `type: 'reply', body` say the same for a Hub whose «/» in personal messages reads
- * only the chat's answer. The window closed without a file — `{ type: 'ack' }`, nothing is shown.
+ * The answer is Hub's `{ pending, message }`, its end comes as `job.done`. The window closed without a file — `{ type: 'ack' }`,
+ * nothing is shown.
  */
-export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{ pending: string; message: string; type: 'reply'; body: string } | { type: 'ack' }> {
+export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{ pending: string; message: string } | { type: 'ack' }> {
   const p = params && typeof params === 'object' ? (params as { values?: unknown }) : {};
   const values = p.values && typeof p.values === 'object' && !Array.isArray(p.values) ? (p.values as Values) : {};
   const targetMB = targetOf(values);
   const [path] = await deps.pick();
   if (!path) return { type: 'ack' };
-  const answer = await startFollowed(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, { op: 'compress', title: basename(path), tail: '. Перетащите файл в беседу' });
-  const body = `Сжимаю «${basename(path)}» до ${targetMB} МБ — файл появится рядом с исходным и во вкладке «Готовое» Конвертера`;
-  return { ...answer, type: 'reply', body };
+  const title = basename(path);
+  return startFollowed(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, { op: 'compress', title, tail: '. Перетащите файл в беседу' }, `Сжимаю «${title}» до ${targetMB} МБ…`);
 }

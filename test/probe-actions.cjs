@@ -1,4 +1,4 @@
-// «Конвертер» 1.2.0 from outside its screen, in a copy of Hub with the real program's bridges and the real part (author mode),
+// «Конвертер» 1.2.2 from outside its screen, in a copy of Hub with the real program's bridges and the real part (author mode),
 // hidden window only (no window on the screen, no real input — the page is driven by its own JavaScript):
 //   QUADRO_PROBE_LOGIN=test_owner:<password> QUADRO_DEV_PACKAGES=<this folder>\dist QUADRO_PROBE_FILES=<a video> \
 //   PROBE_OUT=<folder> PROBE_DOWNLOADS=<apps>\Загрузки\Quadro Hub \
@@ -49,16 +49,21 @@ module.exports = async (probe) => {
   const clearToasts = async () => {
     seen = new Set((await toasts()) || []);
   };
-  const videoMenu = async () => {
+  // The menu of one file: `pick` — JavaScript giving its «Открыть с помощью» button (the video's player, or the n-th sound).
+  const menuOf = async (pick) => {
     await js(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     await wait(300);
-    await until(`!!document.querySelector('video') && [...document.querySelectorAll('button[aria-label="Открыть с помощью"]')].length > 0`, 60000);
-    await js(`(() => { const b = [...document.querySelectorAll('button[aria-label="Открыть с помощью"]')][0];
-      b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' })); })()`);
+    await until(`!!(${pick})`, 60000);
+    await js(`(${pick}).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }))`);
     await until(`document.querySelectorAll('[role="menuitem"]').length > 0`, 10000);
     await wait(700); // «Повторить» is asked when the menu opens
     return js(`[...document.querySelectorAll('[role="menu"]')].map((m) => m.innerText.trim().split(/\\n+/)).flat()`);
   };
+  // The video's button: the one whose menu sits in the player (its parent chain holds the <video>).
+  const VIDEO_BUTTON = `[...document.querySelectorAll('button[aria-label="Открыть с помощью"]')].find((b) => { for (let e = b.parentElement; e; e = e.parentElement) if (e.querySelector('video')) return true; return false; })`;
+  // The n-th sound of the conversation (звук.mp3 was sent first, голос.ogg after it).
+  const soundButton = (n) => `([...document.querySelectorAll('audio')][${n}] || {}).parentElement?.querySelector('button[aria-label="Открыть с помощью"]')`;
+  const videoMenu = () => menuOf(VIDEO_BUTTON);
   const choose = (title) => js(`(() => { const i = [...document.querySelectorAll('[role="menuitem"]')].find((e) => e.textContent.trim() === ${JSON.stringify(title)});
     if (!i) return false; i.click(); return true; })()`);
   const files = () => (DOWN && existsSync(DOWN) ? readdirSync(DOWN) : []);
@@ -85,6 +90,7 @@ module.exports = async (probe) => {
   log('MENU', JSON.stringify(menu));
   for (const need of ['Открыть с помощью', '«Конвертер»', 'Убрать звук', 'Сжать…', 'Вытащить звук в mp3'])
     if (!menu.includes(need)) throw new Error('в меню нет «' + need + '»: ' + JSON.stringify(menu));
+  if (menu.includes('Перевести в mp3')) throw new Error('у видео действие звука: ' + JSON.stringify(menu));
   await shot('cv-menu.png');
 
   // 2) «Убрать звук»: the first call starts the part (its FFmpeg is fetched once in the author mode).
@@ -131,15 +137,39 @@ module.exports = async (probe) => {
   if (made.filter((f) => /\(Quadro.*\)\.mp4$/.test(f)).length < 1) throw new Error('нет видео-результата');
 
   // «Повторить» — the last action on this video.
-  const again = await videoMenu();
+  // Hub asks «Повторить» each time the menu opens; until its answer the menu may show the one of last time — opened again then.
+  let again = await videoMenu();
   log('MENU-AGAIN', JSON.stringify(again));
-  if (!again.some((t) => /^Повторить: Сжать/.test(t))) throw new Error('нет «Повторить: Сжать…»');
+  for (let i = 0; i < 3 && !again.some((t) => /^Повторить: Сжать/.test(t)); i++) {
+    log('MENU-AGAIN-STALE', 'меню показало прошлое «Повторить», открываю снова');
+    await wait(1500);
+    again = await videoMenu();
+  }
+  if (!again.some((t) => /^Повторить: Сжать/.test(t))) throw new Error('нет «Повторить: Сжать…»: ' + JSON.stringify(again));
   await shot('cv-relaunch.png');
   await js(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
 
-  // 3) «Открыть в Конвертер» of the sound: the screen with the file.
-  await until(`!!document.querySelector('button[aria-label^="Открыть в «Конвертер"]')`, 10000);
-  await js(`document.querySelector('button[aria-label^="Открыть в «Конвертер"]').click()`);
+  // The sounds (match.mime «audio/*»): «Перевести в mp3» — the ogg becomes an mp3, the mp3 stays as it is; no video actions.
+  const oggMenu = await menuOf(soundButton(1));
+  log('MENU-OGG', JSON.stringify(oggMenu));
+  for (const need of ['«Конвертер»', 'Перевести в mp3'])
+    if (!oggMenu.includes(need)) throw new Error('в меню звука нет «' + need + '»: ' + JSON.stringify(oggMenu));
+  if (oggMenu.some((t) => /Убрать звук|Сжать|Вытащить/.test(t))) throw new Error('у звука действия видео: ' + JSON.stringify(oggMenu));
+  await shot('cv-menu-ogg.png');
+  await clearToasts();
+  await choose('Перевести в mp3');
+  const toMp3 = await toastLike(/Готово «голос.*\.mp3»/, 120_000);
+  log('TO-MP3', toMp3);
+  await shot('cv-to-mp3-done.png');
+  await menuOf(soundButton(0));
+  await clearToasts();
+  await choose('Перевести в mp3');
+  const already = await toastLike(/уже в mp3/, 30_000);
+  log('ALREADY-MP3', already);
+
+  // 3) «Открыть с помощью → Конвертер» of the sound: the screen with the file.
+  await menuOf(soundButton(0));
+  await choose('«Конвертер»');
   await until(`location.pathname.includes('quadro.convert')`, 15000);
   const screen = await frameHas('звук', 60000);
   log('OPEN-WITH', JSON.stringify(screen.slice(0, 300)));
@@ -167,7 +197,8 @@ module.exports = async (probe) => {
   await js(`document.querySelector('textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`);
   await until(`!!document.querySelector('#hub-form input[type="number"]')`, 10000);
   await js(`document.querySelector('button[type="submit"][form="hub-form"]').click()`);
-  const chat = await toastLike(/Перетащите файл в беседу|Сжимаю «клип-pick/, 120_000);
+  // One answer: Hub follows the job (pending → percent → «Готово … Перетащите файл в беседу»), no second line of a «reply».
+  const chat = await toastLike(/Перетащите файл в беседу|Сжимаю «клип-pick.*» до 10 МБ/, 120_000);
   log('SLASH', chat);
   await shot('cv-slash-done.png');
   if (PICKED) {
@@ -178,7 +209,10 @@ module.exports = async (probe) => {
     log('PICKED-RESULT', JSON.stringify(next.map((f) => `${f} ${statSync(join(dirname(PICKED), f)).size}`)));
     if (readdirSync(dirname(PICKED)).length <= before) throw new Error('нет результата рядом с выбранным видео');
     await wait(1500);
-    log('SLASH-END', JSON.stringify(await toasts()));
+    const end2 = (await toasts()) || [];
+    log('SLASH-END', JSON.stringify(end2));
+    const twice = end2.filter((t) => /клип-pick/.test(t) && !seen.has(t));
+    if (twice.length > 1) throw new Error('два ответа на /сжать: ' + JSON.stringify(twice));
     await shot('cv-slash-end.png');
   }
   log('OK', 'действия над видео с процентами, форма, «Повторить», «Открыть с помощью» и /сжать работают');

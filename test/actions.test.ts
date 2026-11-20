@@ -62,6 +62,20 @@ describe('actions over a video of Hub', () => {
     expect(b.emitted.at(-1)).toEqual({ name: 'job.failed', data: { jobId: 'job-1', message: 'Отменено' } });
   });
 
+  it('«Перевести в mp3» for a sound; an mp3 (by its mime or name) stays as it is', async () => {
+    const { deps, started, emitted, events, job } = fakeDeps();
+    const wav = { ...fileObject('C:\\d\\voice.wav'), title: 'voice.wav', facts: { mime: 'audio/wav' } };
+    expect(await objectAction(deps, 'actToMp3', { object: wav, values: {} })).toEqual({ pending: 'job-1', message: 'Перевожу в mp3 «voice.wav»…' });
+    expect(started).toEqual([{ path: 'C:\\d\\voice.wav', op: 'convert', params: { to: 'mp3' } }]);
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\d\\voice (Quadro).mp3', outSize: 2 * MB }));
+    expect(emitted.at(-1)!.data.message).toBe('Готово «voice (Quadro).mp3»: 2 МБ — в папке «d»');
+    const other = fakeDeps();
+    const mp3 = { ...fileObject('C:\\d\\song.mp3'), title: 'song.mp3', facts: { mime: 'audio/mpeg' } };
+    expect(await objectAction(other.deps, 'actToMp3', { object: mp3, values: {} })).toEqual({ message: '«song.mp3» уже в mp3', kind: 'info' });
+    expect(await objectAction(other.deps, 'actToMp3', { object: { ...mp3, facts: {} }, values: {} })).toEqual({ message: '«song.mp3» уже в mp3', kind: 'info' });
+    expect(other.started).toEqual([]);
+  });
+
   it('a job already over when followed is told at once', () => {
     const emitted: string[] = [];
     const events = new JobEvents((name) => emitted.push(name));
@@ -88,16 +102,11 @@ describe('actions over a video of Hub', () => {
 });
 
 describe('«/сжать» in personal messages', () => {
-  it('the person picks a video; the answer is pending (and the chat\'s reply for an older Hub); the end adds the hint to drag it', async () => {
+  it('the person picks a video; one answer — pending with the size; the end adds the hint to drag it', async () => {
     const { deps, started, emitted, events, job } = fakeDeps(['C:\\v\\trip.mp4']);
     const answer = await chatCompress(deps, { command: 'compress', values: { targetMB: 10 }, where: { kind: 'dm', conversationId: 'c1' } });
     expect(started[0]).toEqual({ path: 'C:\\v\\trip.mp4', op: 'compress', params: { mode: 'size', targetMB: 10 } });
-    expect(answer).toEqual({
-      pending: 'job-1',
-      message: 'Сжимаю «trip.mp4»…',
-      type: 'reply',
-      body: 'Сжимаю «trip.mp4» до 10 МБ — файл появится рядом с исходным и во вкладке «Готовое» Конвертера',
-    });
+    expect(answer).toEqual({ pending: 'job-1', message: 'Сжимаю «trip.mp4» до 10 МБ…' });
     events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4', inSize: 40 * MB, outSize: 9.8 * MB }));
     expect(emitted.at(-1)!.data.message).toBe('Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v». Перетащите файл в беседу');
   });
@@ -111,7 +120,7 @@ describe('«/сжать» in personal messages', () => {
 
 describe('helpers', () => {
   it('objectFile keeps only a file with a path; targetOf defaults to 10 МБ; sizes in words', () => {
-    expect(objectFile({ object: fileObject(), values: { targetMB: 5 } })).toEqual({ path: FILE, title: 'clip.mp4', values: { targetMB: 5 } });
+    expect(objectFile({ object: fileObject(), values: { targetMB: 5 } })).toEqual({ path: FILE, title: 'clip.mp4', mime: 'video/mp4', values: { targetMB: 5 } });
     expect(targetOf({})).toBe(10);
     expect(sizeText(512)).toBe('1 КБ');
     expect(sizeText(250 * MB)).toBe('250 МБ');
