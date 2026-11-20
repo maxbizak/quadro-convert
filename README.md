@@ -55,6 +55,14 @@ HUB_DEV_PACKAGES="<путь к этой папке>" node scripts/dev.mjs --addr
 (`test/probe-actions.cjs`, как запускать — в начале файла). Нужна личка с видео `.mp4` и звуком `.mp3` на своей
 копии Hub. Окно выбора файла заменяет `QUADRO_PROBE_FILES`, поэтому окна Windows не открываются.
 
+## Выпуск из CI (с 1.2.3)
+
+Тег `v<версия>` (та же, что в `manifest.json`) запускает `.github/workflows/release.yml` в github.com/maxbizak/quadro-convert:
+`npm ci`, сборка, `qhapp-1.0.6.mjs` со сверкой sha256 и `ci-publish dist --hub https://quadro-metaverse.site`. Ключей нет ни в
+репозитории, ни в секретах: Hub меняет токен GitHub на сертификат на час. В Каталоге у версии — «Собрано из
+github.com/maxbizak/quadro-convert@…». Доверие workflow — «Каталог → Опубликовать → Выпуск из CI». Ручная подпись ниже —
+запасной путь.
+
 ## Упаковать, подписать, отправить
 
 Ключ автора издателя `quadro` — `~/.quadro/keys/quadro-1.key` (закрытый, только на этом ПК), открытый ключ —
