@@ -12,6 +12,18 @@ export interface QuadroContext {
   user: { id: string; displayName: string; avatarUrl: string | null };
   /** Its part on the PC is here (the screen runs in the program and the part is installed). */
   pc?: boolean;
+  /**
+   * Files opened with this app («Открыть с помощью», shell.openWith@1): in the program each has the path its part may work with
+   * (the program gave it as picked by the person); later ones come with the event «files.open» ({ files }).
+   */
+  files?: OpenedFile[];
+}
+
+export interface OpenedFile {
+  name: string;
+  size?: number;
+  /** In the program: the file for its part on the PC. */
+  path?: string;
 }
 
 export interface QuadroTheme {

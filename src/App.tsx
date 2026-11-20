@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, AudioLines, Check, FileImage, FileVideo, FolderOpen, RotateCw, Scissors, Search, X } from 'lucide-react';
 import { errorText, quadro, usePcEvents, useQuadro } from './quadro';
 import { FORMATS, GROUPS, QUICK, canConvert, estimateBytes, targets, type Kind } from './formats';
@@ -65,7 +65,13 @@ export function App() {
       </main>
     );
   }
-  return <ConvertScreen initialTab={tabOf(ctx.view)} />;
+  return <ConvertScreen initialTab={tabOf(ctx.view)} initialFiles={pathsOf(ctx.files)} />;
+}
+
+/** The paths of files opened with the app («Открыть с помощью»): only those the program gave its part. */
+export function pathsOf(files: unknown): string[] {
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((f) => (f && typeof f === 'object' && typeof (f as { path?: unknown }).path === 'string' && (f as { path: string }).path ? [(f as { path: string }).path] : []));
 }
 
 /** The manifest's view this frame shows (a command of Ctrl+K or the rail's menu) → the tab it opens on. */
@@ -73,7 +79,7 @@ function tabOf(view: string | undefined): Tab {
   return view === 'compress' || view === 'video' || view === 'done' ? view : 'convert';
 }
 
-function ConvertScreen({ initialTab = 'convert' }: { initialTab?: Tab }) {
+function ConvertScreen({ initialTab = 'convert', initialFiles = [] }: { initialTab?: Tab; initialFiles?: string[] }) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [engine, setEngine] = useState<Engine | null>(null);
   const [items, setItems] = useState<Item[]>([]);
@@ -131,6 +137,24 @@ function ConvertScreen({ initialTab = 'convert' }: { initialTab?: Tab }) {
     },
     [items, quick],
   );
+  // «Открыть с помощью»: the files the screen was opened with, and those opened while it is open (the event «files.open»).
+  const addLatest = useRef(addPaths);
+  addLatest.current = addPaths;
+  const openedOnce = useRef(false);
+  useEffect(() => {
+    if (openedOnce.current) return;
+    openedOnce.current = true;
+    if (initialFiles.length) void addLatest.current(initialFiles);
+  }, [initialFiles]);
+  useEffect(() => {
+    if (!quadro) return;
+    return quadro.on('files.open', (e) => {
+      const paths = pathsOf((e as { files?: unknown } | null)?.files);
+      if (!paths.length) return;
+      setTab('convert');
+      void addLatest.current(paths);
+    });
+  }, []);
   const pick = async () => {
     try {
       await addPaths((await pc<string[]>('pickFiles')) ?? []);

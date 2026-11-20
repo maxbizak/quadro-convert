@@ -3,8 +3,8 @@
   "id": "quadro.convert",
   "name": "Конвертер",
   "summary": "Видео, аудио и картинки в любой формат — на вашем ПК",
-  "description": "Конвертирует, сжимает, обрезает видео, делает GIF и вынимает звук. Всё делается на вашем компьютере движком FFmpeg — файлы не уходят в интернет. Права: выбрать файлы (окно Windows), показать результат в папке и открыть его, свою папку данных (история заданий) и запуск FFmpeg, который ставится вместе с приложением.",
-  "version": "1.1.0",
+  "description": "Конвертирует, сжимает, обрезает видео, делает GIF и вынимает звук. Всё делается на вашем компьютере движком FFmpeg — файлы не уходят в интернет. У видео в чатах Hub — «Убрать звук», «Сжать…» и «Вытащить звук в mp3»; видео и звук открываются в Конвертере через «Открыть с помощью»; в личных сообщениях — команда /compress. Права: выбрать файлы (окно Windows), показать результат в папке и открыть его, свою папку данных (история заданий) и запуск FFmpeg, который ставится вместе с приложением.",
+  "version": "1.2.0",
   "icon": "file-text",
   "engines": {
     "hub": "^2.0"
@@ -148,6 +148,152 @@
         "run": {
           "kind": "open",
           "view": "done"
+        }
+      }
+    ],
+    "shell.openWith@1": [
+      {
+        "id": "media",
+        "title": "Конвертер",
+        "icon": "file-text",
+        "extensions": [
+          "mp4",
+          "mkv",
+          "webm",
+          "mov",
+          "avi",
+          "m4v",
+          "flv",
+          "wmv",
+          "mp3",
+          "wav",
+          "ogg",
+          "opus",
+          "m4a",
+          "aac",
+          "flac",
+          "wma"
+        ],
+        "view": "main",
+        "multiple": true
+      }
+    ],
+    "shell.objectAction@1": [
+      {
+        "id": "mute",
+        "title": "Убрать звук",
+        "icon": "volume-x",
+        "description": "Копия видео без звука — рядом с файлом, без пережатия",
+        "object": "file",
+        "match": {
+          "ext": [
+            "mp4",
+            "mkv",
+            "webm",
+            "mov",
+            "avi",
+            "m4v",
+            "flv",
+            "wmv"
+          ]
+        },
+        "order": 100,
+        "run": {
+          "kind": "pc",
+          "method": "actMute"
+        }
+      },
+      {
+        "id": "compress",
+        "title": "Сжать…",
+        "icon": "minimize-2",
+        "description": "Пережать видео до нужного размера (Discord, Telegram)",
+        "object": "file",
+        "match": {
+          "ext": [
+            "mp4",
+            "mkv",
+            "webm",
+            "mov",
+            "avi",
+            "m4v",
+            "flv",
+            "wmv"
+          ]
+        },
+        "order": 110,
+        "run": {
+          "kind": "pc",
+          "method": "actCompress",
+          "form": {
+            "title": "Сжать видео",
+            "description": "Видео пережмётся так, чтобы уложиться в размер. Discord без Nitro — 10 МБ, Telegram — до 2000 МБ.",
+            "submit": "Сжать",
+            "fields": [
+              {
+                "key": "targetMB",
+                "type": "number",
+                "label": "Размер файла",
+                "default": 10,
+                "min": 1,
+                "max": 4000,
+                "unit": "МБ",
+                "required": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "audio",
+        "title": "Вытащить звук в mp3",
+        "icon": "music",
+        "description": "Звук видео отдельным файлом mp3",
+        "object": "file",
+        "match": {
+          "ext": [
+            "mp4",
+            "mkv",
+            "webm",
+            "mov",
+            "avi",
+            "m4v",
+            "flv",
+            "wmv"
+          ]
+        },
+        "order": 120,
+        "run": {
+          "kind": "pc",
+          "method": "actAudio"
+        }
+      }
+    ],
+    "servers.command@1": [
+      {
+        "id": "compress",
+        "name": "compress",
+        "title": "Сжать видео",
+        "description": "Выберите видео на ПК — Конвертер пережмёт его до нужного размера, чтобы отправить в беседу",
+        "icon": "minimize-2",
+        "scopes": [
+          "dm",
+          "self"
+        ],
+        "options": [
+          {
+            "key": "targetMB",
+            "type": "number",
+            "label": "Размер, МБ",
+            "default": 10,
+            "min": 1,
+            "max": 4000,
+            "unit": "МБ",
+            "required": true
+          }
+        ],
+        "run": {
+          "handler": "pc:chatCompress"
         }
       }
     ]

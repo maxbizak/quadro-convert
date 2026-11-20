@@ -59,6 +59,13 @@ describe('the built part of «Конвертер»', () => {
     await expect(rpc.call('start', { items: [{ path: 'C:\\media\\clip.mp4', op: 'convert', params: { to: 'mp3' } }] })).rejects.toThrow(/FFmpeg/);
   });
 
+  it('answers the actions over a video of Hub and «/compress» (refusing without its engine)', async () => {
+    const object = { kind: 'file', id: '/api/files/1', title: 'clip.mp4', url: '/api/files/1', path: 'C:\\media\\clip.mp4' };
+    await expect(rpc.call('actMute', { object: { kind: 'person', id: 'u1', title: 'Аня' }, values: {} })).rejects.toThrow(/с файлом/);
+    await expect(rpc.call('actCompress', { object, values: { targetMB: 10 } })).rejects.toThrow(/FFmpeg не найден/);
+    await expect(rpc.call('chatCompress', { command: 'compress', values: { targetMB: 10 }, where: { kind: 'dm', conversationId: 'c1' } })).rejects.toThrow(/FFmpeg не найден/);
+  });
+
   it('knows only its own methods', async () => {
     await expect(rpc.call('deleteEverything')).rejects.toThrow(/Нет такого действия/);
   });

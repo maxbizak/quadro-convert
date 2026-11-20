@@ -1,12 +1,14 @@
 import { join } from 'node:path';
 import { connect, type PartHostApi } from '@quadrohub/pc-sdk';
-import { ConvertEngine, type EngineFiles, type Item } from './engine';
+import { chatCompress, JobWaiter, objectAction, OBJECT_ACTIONS, VIDEO_EXT, type ActionDeps } from './actions';
+import { ConvertEngine, type EngineFiles, type Item, type Job } from './engine';
 
 // «Конвертер»'s part on the PC, a package of the catalog like any author's (docs/apps/convert.md): FFmpeg is its download
 // (manifest `parts.pc.downloads`, unpack: 'zip' — the program fetches, checks and unpacks it at «Поставить»); the person's files
-// come through the program (pc.files.pick / reveal / open), its programs are its own (pc.process).
+// come through the program (pc.files.pick / reveal / open), its programs are its own (pc.process). Besides its screen it answers
+// the actions over videos of Hub and «/compress» in personal messages (actions.ts).
 
-export const CONVERT_METHODS = ['status', 'install', 'probe', 'pickFiles', 'pickFolder', 'start', 'cancel', 'list', 'reveal', 'open', 'settings', 'setSettings'] as const;
+export const CONVERT_METHODS = ['status', 'install', 'probe', 'pickFiles', 'pickFolder', 'start', 'cancel', 'list', 'reveal', 'open', 'settings', 'setSettings', ...Object.keys(OBJECT_ACTIONS), 'chatCompress'] as const;
 
 /** FFmpeg of its manifest: the download's id and where its programs lie in the unpacked archive. */
 export const FFMPEG = { download: 'ffmpeg', version: '9.0.2', bin: 'ffmpeg-9.0.2-essentials_build/bin' } as const;
@@ -14,7 +16,7 @@ export const FFMPEG = { download: 'ffmpeg', version: '9.0.2', bin: 'ffmpeg-9.0.2
 /** What it reads, picks and opens. */
 export const MEDIA = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'flv', 'wmv', 'mp3', 'wav', 'ogg', 'opus', 'm4a', 'aac', 'flac', 'wma', 'jpg', 'jpeg', 'png', 'webp', 'avif', 'bmp', 'tiff', 'tif', 'gif', 'ico'];
 
-export function serveConvert(host: PartHostApi, engine: ConvertEngine): void {
+export function serveConvert(host: Pick<PartHostApi, 'rpc' | 'files' | 'lifecycle'>, engine: ConvertEngine, waiter: JobWaiter): void {
   const obj = (x: unknown) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : {});
   host.rpc.handle('status', () => engine.status());
   host.rpc.handle('install', () => engine.install());
@@ -28,6 +30,15 @@ export function serveConvert(host: PartHostApi, engine: ConvertEngine): void {
   host.rpc.handle('open', (x) => host.files.open(String(obj(x).path ?? '')));
   host.rpc.handle('settings', () => engine.settings());
   host.rpc.handle('setSettings', (x) => engine.setSettings(obj(x) as { mode?: 'next' | 'folder'; folder?: string }));
+  const deps: ActionDeps = {
+    // Next to the file, whatever «Сохранять в папку» says: the person acts on this one file and looks for the result by it.
+    start: (items) => engine.start(items, { mode: 'next' }),
+    finished: (id, ms) => waiter.finished(id, ms, engine.list().find((j) => j.id === id)),
+    pick: () => host.files.pick({ multiple: false, extensions: [...VIDEO_EXT], title: 'Какое видео сжать' }),
+    now: () => Date.now(),
+  };
+  for (const method of Object.keys(OBJECT_ACTIONS)) host.rpc.handle(method, (x) => objectAction(deps, method, x));
+  host.rpc.handle('chatCompress', (x) => chatCompress(deps, x));
   host.lifecycle.onStop(() => engine.stop());
 }
 
@@ -42,16 +53,20 @@ export function engineFiles(host: Pick<PartHostApi, 'files'>): EngineFiles {
 
 async function main(): Promise<void> {
   const host = await connect();
+  const waiter = new JobWaiter();
   const engine = new ConvertEngine({
     dataDir: host.app.dataDir,
     bin: join(host.app.download(FFMPEG.download, { unpacked: true }), ...FFMPEG.bin.split('/')),
     version: FFMPEG.version,
     files: engineFiles(host),
     spawn: (cmd, args) => host.processes.spawn(cmd, args, { windowsHide: true }),
-    emit: (name, data) => host.events.emit(name, data),
+    emit: (name, data) => {
+      waiter.seen(data as Job);
+      host.events.emit(name, data);
+    },
     busy: (reason) => host.lifecycle.busy(reason),
   });
-  serveConvert(host, engine);
+  serveConvert(host, engine, waiter);
 }
 
 // Started by the program (an installed app's part talks over Node's IPC channel); imported by tests — nothing runs.
