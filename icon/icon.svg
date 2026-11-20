@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Конвертер</title>
+  <rect width="64" height="64" rx="14" fill="#7C5CFF"/>
+  <rect x="9" y="12" width="46" height="40" rx="6" fill="#fff"/>
+  <g fill="#7C5CFF">
+    <rect x="11.5" y="16" width="5" height="6" rx="1.4"/>
+    <rect x="47.5" y="16" width="5" height="6" rx="1.4"/>
+    <rect x="11.5" y="29" width="5" height="6" rx="1.4"/>
+    <rect x="47.5" y="29" width="5" height="6" rx="1.4"/>
+    <rect x="11.5" y="42" width="5" height="6" rx="1.4"/>
+    <rect x="47.5" y="42" width="5" height="6" rx="1.4"/>
+  </g>
+  <g fill="none" stroke="#7C5CFF" stroke-width="5" stroke-linecap="round">
+    <path d="M22.13 28.41A10.5 10.5 0 0 1 39.8 24.97"/>
+    <path d="M41.87 35.59A10.5 10.5 0 0 1 24.2 39.03"/>
+  </g>
+  <g fill="#7C5CFF">
+    <path d="M42.06 21.06 43.95 29.58 35.67 26.81Z"/>
+    <path d="M21.94 42.94 20.05 34.42 28.33 37.19Z"/>
+  </g>
+</svg>
