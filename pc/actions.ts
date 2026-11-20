@@ -2,29 +2,38 @@ import { basename, dirname } from 'node:path';
 import type { Item, Job, Op } from './engine';
 
 // What «Конвертер» does from outside its screen (Hub's API, docs/v2/kernel.md §12ж and chat-apps.md §2):
-//  - actions over a video of Hub (shell.objectAction@1, run «pc»): the program downloads the file to «Загрузки\Quadro Hub» and
-//    gives it to the part as picked by the person — `{ object: { kind: 'file', title, path }, values }`;
-//  - «/compress» in personal messages (servers.command@1, handler «pc:»): the person picks the video in Windows' own window.
-// The program waits for a call at most 60 s, so the part answers within BUDGET_MS: the result if it is ready, or «сжимаю…» — the
-// job goes on and its result appears in «Готовое» (the screen hears its events).
+//  - actions over a video of Hub (shell.objectAction@1, run «pc», `match.ext` — the player of Hub tells no mime yet): the program downloads the file to
+//    «Загрузки\Quadro Hub» and gives it to the part as picked by the person — `{ object: { kind: 'file', title, path }, values }`;
+//  - «/сжать» in personal messages (servers.command@1, handler «pc:»): the person picks the video in Windows' own window.
+// The program waits for a call at most 60 s, so the part answers at once `{ pending: jobId, message }` and tells the rest by its
+// events with that jobId: `job.progress { percent, message }`, then `job.done { message, kind }` or `job.failed { message }` —
+// Hub keeps the notice with the percent until the end (JobEvents).
 
-/** Videos it acts on: the manifest's `match.ext` of the actions and what «/compress» lets the person pick. */
+/** Videos «/сжать» lets the person pick and «Открыть с помощью» brings (the actions take the same). */
 export const VIDEO_EXT = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'flv', 'wmv'] as const;
 /** Sounds «Открыть с помощью» brings to its screen (with the videos). */
 export const AUDIO_EXT = ['mp3', 'wav', 'ogg', 'opus', 'm4a', 'aac', 'flac', 'wma'] as const;
 
-/** How long a call waits for the job (the program's limit is 60 s; the part may be starting and Windows' window takes time). */
-export const BUDGET_MS = 40_000;
-
-/** The target size of «Сжать…» and «/compress» (МБ): Discord without Nitro — 10, Telegram — 2000 (its limit 2 ГБ). */
+/** The target size of «Сжать…» and «/сжать» (МБ): Discord without Nitro — 10, Telegram — 2000 (its limit 2 ГБ). */
 export const TARGET_MB = { default: 10, min: 1, max: 4000 } as const;
+
+type Work = 'removeAudio' | 'compress' | 'extractAudio';
+const WORK: Record<Work, string> = { removeAudio: 'Убираю звук', compress: 'Сжимаю', extractAudio: 'Вынимаю звук' };
+
+/** A job started from outside the screen: what to say about it, and what to add to its last line. */
+export interface Followed {
+  op: Work;
+  title: string;
+  /** Said after «Готово …» (the chat: «Перетащите файл в беседу»). */
+  tail?: string;
+}
 
 export interface ActionDeps {
   start(items: Item[]): Promise<{ ids: string[] }>;
-  /** The job's end (done, failed, cancelled), or null when `ms` passed first. */
-  finished(id: string, ms: number): Promise<Job | null>;
   pick(): Promise<string[]>;
-  now(): number;
+  /** The job now (it may already be over when it is followed). */
+  current(id: string): Job | undefined;
+  events: JobEvents;
 }
 
 type Values = Record<string, unknown>;
@@ -51,82 +60,82 @@ export function sizeText(bytes: number | undefined): string {
   return mb >= 1 ? `${mb.toLocaleString('ru-RU', { maximumFractionDigits: mb >= 100 ? 0 : 1 })} МБ` : `${Math.max(1, Math.round(bytes / 1024))} КБ`;
 }
 
-const WORK: Record<'removeAudio' | 'compress' | 'extractAudio', string> = { removeAudio: 'Убираю звук', compress: 'Сжимаю', extractAudio: 'Вынимаю звук' };
+/** «Готово «клип (Quadro).mp4»: 5 МБ, было 17,9 МБ — в папке «Quadro Hub»». */
+export function doneLine(job: Job, f: Followed): string {
+  const name = job.outPath ? basename(job.outPath) : f.title;
+  const where = job.outPath ? ` — в папке «${basename(dirname(job.outPath))}»` : '';
+  const sizes = f.op === 'compress' && job.inSize && job.outSize ? `: ${sizeText(job.outSize)}, было ${sizeText(job.inSize)}` : job.outSize ? `: ${sizeText(job.outSize)}` : '';
+  return `Готово «${name}»${sizes}${where}${f.tail ?? ''}`;
+}
 
-/** Starts one job and waits for it within the budget: the line for the person, or the job's own error. */
-export async function runOne(deps: ActionDeps, item: Item & { op: keyof typeof WORK }, title: string, since: number): Promise<string> {
+/** The first line of a job: «Сжимаю «клип.mp4»». */
+export const workLine = (f: Followed) => `${WORK[f.op]} «${f.title}»`;
+
+/**
+ * The part's events `job.*` for the jobs started by an action or a command (Hub follows them by jobId): the engine's own events
+ * («job», for the screen) come here too. The percent is told when its whole number changes.
+ */
+export class JobEvents {
+  private readonly followed = new Map<string, Followed & { percent: number }>();
+  constructor(private readonly emit: (name: 'job.progress' | 'job.done' | 'job.failed', data: Record<string, unknown>) => void) {}
+
+  follow(id: string, f: Followed, now?: Job): void {
+    this.followed.set(id, { ...f, percent: -1 });
+    if (now) this.seen(now);
+  }
+
+  seen(job: Job): void {
+    const f = this.followed.get(job.id);
+    if (!f) return;
+    if (job.state === 'queued' || job.state === 'running') {
+      const percent = Math.max(0, Math.min(99, Math.floor((job.progress || 0) * 100)));
+      if (percent === f.percent) return;
+      f.percent = percent;
+      this.emit('job.progress', { jobId: job.id, percent, message: workLine(f) });
+      return;
+    }
+    this.followed.delete(job.id);
+    if (job.state === 'done') this.emit('job.done', { jobId: job.id, message: doneLine(job, f), kind: 'success' });
+    else this.emit('job.failed', { jobId: job.id, message: job.state === 'cancelled' ? 'Отменено' : job.error || 'Не удалось обработать файл' });
+  }
+}
+
+/** Starts one job, follows it, and answers at once: `{ pending, message }` (Hub keeps the notice until `job.done` / `job.failed`). */
+async function startFollowed(deps: ActionDeps, item: Item & { op: Work }, f: Followed): Promise<{ pending: string; message: string }> {
   const { ids } = await deps.start([item]);
   const id = ids[0]!;
-  const job = await deps.finished(id, Math.max(0, BUDGET_MS - (deps.now() - since)));
-  if (!job) return `${WORK[item.op]} «${title}» — готовый файл будет во вкладке «Готовое» Конвертера`;
-  if (job.state === 'cancelled') return 'Отменено';
-  if (job.state === 'failed') throw new Error(job.error || 'Не удалось обработать файл');
-  const name = job.outPath ? basename(job.outPath) : title;
-  const where = job.outPath ? ` — в папке «${basename(dirname(job.outPath))}»` : '';
-  const sizes = item.op === 'compress' && job.inSize && job.outSize ? `: ${sizeText(job.outSize)}, было ${sizeText(job.inSize)}` : job.outSize ? `: ${sizeText(job.outSize)}` : '';
-  return `Готово «${name}»${sizes}${where}`;
+  deps.events.follow(id, f, deps.current(id));
+  return { pending: id, message: `${workLine(f)}…` };
 }
 
 /** The actions of the manifest (`run.method`) → the engine's operation. */
-export const OBJECT_ACTIONS: Record<string, (values: Values) => { op: Op & keyof typeof WORK; params: Record<string, unknown> }> = {
+export const OBJECT_ACTIONS: Record<string, (values: Values) => { op: Op & Work; params: Record<string, unknown> }> = {
   actMute: () => ({ op: 'removeAudio', params: {} }),
   actCompress: (values) => ({ op: 'compress', params: { mode: 'size', targetMB: targetOf(values) } }),
   actAudio: () => ({ op: 'extractAudio', params: { to: 'mp3' } }),
 };
 
-/** An action over a file of Hub: `{ message }` — the shell's line for the person («Готово …» or «Сжимаю …»). */
-export async function objectAction(deps: ActionDeps, method: string, params: unknown): Promise<{ message: string }> {
-  const since = deps.now();
+/** An action over a file of Hub: `{ pending, message }` — the rest comes as the part's events `job.*`. */
+export async function objectAction(deps: ActionDeps, method: string, params: unknown): Promise<{ pending: string; message: string }> {
   const make = OBJECT_ACTIONS[method];
   if (!make) throw new Error('Нет такого действия');
   const { path, title, values } = objectFile(params);
-  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  if (!(VIDEO_EXT as readonly string[]).includes(ext)) throw new Error('Это действие — для видео');
   const { op, params: p } = make(values);
-  return { message: await runOne(deps, { path, op, params: p }, title, since) };
+  return startFollowed(deps, { path, op, params: p }, { op, title });
 }
 
 /**
- * «/compress» in a personal conversation: the person picks the video (Windows' window), it is compressed next to the original.
- * The answer is the chat's `{ type: 'reply', body }` (a notice for the person — apps have no messages in personal conversations yet);
- * the window closed without a file — `{ type: 'ack' }`, nothing is shown.
+ * «/сжать» in a personal conversation: the person picks the video (Windows' window), it is compressed next to the original.
+ * The answer is Hub's `{ pending, message }`; `type: 'reply', body` say the same for a Hub whose «/» in personal messages reads
+ * only the chat's answer. The window closed without a file — `{ type: 'ack' }`, nothing is shown.
  */
-export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{ type: 'reply'; body: string } | { type: 'ack' }> {
-  const since = deps.now();
+export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{ pending: string; message: string; type: 'reply'; body: string } | { type: 'ack' }> {
   const p = params && typeof params === 'object' ? (params as { values?: unknown }) : {};
   const values = p.values && typeof p.values === 'object' && !Array.isArray(p.values) ? (p.values as Values) : {};
   const targetMB = targetOf(values);
   const [path] = await deps.pick();
   if (!path) return { type: 'ack' };
-  const body = await runOne(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, basename(path), since);
-  return { type: 'reply', body: body.startsWith('Готово') ? `${body}. Перетащите файл в беседу` : body };
-}
-
-/** Waits for jobs by the engine's own events («job»): what `finished` of ActionDeps needs. */
-export class JobWaiter {
-  private readonly waiting = new Map<string, Set<(job: Job) => void>>();
-  /** Every event of the engine goes here too. */
-  seen(job: Job): void {
-    if (job.state !== 'done' && job.state !== 'failed' && job.state !== 'cancelled') return;
-    const set = this.waiting.get(job.id);
-    this.waiting.delete(job.id);
-    set?.forEach((fn) => fn(job));
-  }
-  finished(id: string, ms: number, current?: Job): Promise<Job | null> {
-    if (current && (current.state === 'done' || current.state === 'failed' || current.state === 'cancelled')) return Promise.resolve(current);
-    return new Promise((resolve) => {
-      const set = this.waiting.get(id) ?? new Set<(job: Job) => void>();
-      const done = (job: Job) => {
-        clearTimeout(timer);
-        resolve(job);
-      };
-      const timer = setTimeout(() => {
-        set.delete(done);
-        if (!set.size) this.waiting.delete(id);
-        resolve(null);
-      }, ms);
-      set.add(done);
-      this.waiting.set(id, set);
-    });
-  }
+  const answer = await startFollowed(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, { op: 'compress', title: basename(path), tail: '. Перетащите файл в беседу' });
+  const body = `Сжимаю «${basename(path)}» до ${targetMB} МБ — файл появится рядом с исходным и во вкладке «Готовое» Конвертера`;
+  return { ...answer, type: 'reply', body };
 }

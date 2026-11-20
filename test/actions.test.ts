@@ -1,75 +1,84 @@
 import { describe, expect, it } from 'vitest';
-import { BUDGET_MS, chatCompress, JobWaiter, objectAction, objectFile, sizeText, targetOf, type ActionDeps } from '../pc/actions';
+import { chatCompress, doneLine, JobEvents, objectAction, objectFile, sizeText, targetOf, type ActionDeps } from '../pc/actions';
 import type { Item, Job } from '../pc/engine';
 
-// The actions over a video of Hub (shell.objectAction@1, run «pc») and «/compress» in personal messages: what the part asks the
-// engine, and what it answers the shell within the program's 60 s.
+// The actions over a video of Hub (shell.objectAction@1, run «pc») and «/сжать» in personal messages: what the part asks the
+// engine, its answer at once ({ pending, message }) and its events job.* that Hub follows to the end (kernel.md §12ж).
 
 const MB = 1024 * 1024;
 const FILE = 'C:\\Users\\me\\Downloads\\Quadro Hub\\clip.mp4';
-const fileObject = (path = FILE) => ({ kind: 'file', id: '/api/files/1', title: 'clip.mp4', facts: { ext: 'mp4' }, url: '/api/files/1', path });
+const fileObject = (path = FILE) => ({ kind: 'file', id: '/api/files/1', title: 'clip.mp4', facts: { mime: 'video/mp4' }, url: '/api/files/1', path });
 
-function fakeDeps(outcome: Partial<Job> | null, picked: string[] = []) {
+function fakeDeps(picked: string[] = []) {
   const started: Item[] = [];
-  let clock = 0;
-  const waited: number[] = [];
+  const emitted: Array<{ name: string; data: Record<string, unknown> }> = [];
+  const events = new JobEvents((name, data) => emitted.push({ name, data }));
   const deps: ActionDeps = {
     start: async (items) => {
       started.push(...items);
       return { ids: ['job-1'] };
     },
-    finished: async (_id, ms) => {
-      waited.push(ms);
-      return outcome ? ({ id: 'job-1', path: started[0]!.path, op: started[0]!.op, progress: 1, state: 'done', ...outcome } as Job) : null;
-    },
-    pick: async () => {
-      clock += 15_000; // the person looked for the file in Windows' window
-      return picked;
-    },
-    now: () => clock,
+    pick: async () => picked,
+    current: () => ({ id: 'job-1', path: started[0]!.path, op: started[0]!.op, state: 'queued', progress: 0 }),
+    events,
   };
-  return { deps, started, waited };
+  const job = (patch: Partial<Job>): Job => ({ id: 'job-1', path: started[0]!.path, op: started[0]!.op, state: 'running', progress: 0, ...patch });
+  return { deps, started, emitted, events, job };
 }
 
 describe('actions over a video of Hub', () => {
-  it('«Убрать звук» — the file the program gave, without sound, next to it', async () => {
-    const { deps, started } = fakeDeps({ outPath: 'C:\\Users\\me\\Downloads\\Quadro Hub\\clip (Quadro).mp4', outSize: 3 * MB });
-    const answer = await objectAction(deps, 'actMute', { object: fileObject(), values: {} });
+  it('«Убрать звук» answers at once and tells the rest by job.* events with its jobId', async () => {
+    const { deps, started, emitted, events, job } = fakeDeps();
+    expect(await objectAction(deps, 'actMute', { object: fileObject(), values: {} })).toEqual({ pending: 'job-1', message: 'Убираю звук «clip.mp4»…' });
     expect(started).toEqual([{ path: FILE, op: 'removeAudio', params: {} }]);
-    expect(answer.message).toBe('Готово «clip (Quadro).mp4»: 3 МБ — в папке «Quadro Hub»');
+    events.seen(job({ progress: 0.421 }));
+    events.seen(job({ progress: 0.425 })); // the same whole percent — not told again
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\Users\\me\\Downloads\\Quadro Hub\\clip (Quadro).mp4', outSize: 3 * MB }));
+    events.seen(job({ state: 'done', progress: 1 })); // after the end — nothing
+    expect(emitted).toEqual([
+      { name: 'job.progress', data: { jobId: 'job-1', percent: 0, message: 'Убираю звук «clip.mp4»' } },
+      { name: 'job.progress', data: { jobId: 'job-1', percent: 42, message: 'Убираю звук «clip.mp4»' } },
+      { name: 'job.done', data: { jobId: 'job-1', message: 'Готово «clip (Quadro).mp4»: 3 МБ — в папке «Quadro Hub»', kind: 'success' } },
+    ]);
   });
 
-  it('«Сжать…» takes the size of Hub\'s form and says what it became', async () => {
-    const { deps, started } = fakeDeps({ outPath: 'D:\\v\\clip (Quadro).mp4', inSize: 31 * MB, outSize: 9.6 * MB });
-    const answer = await objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 10 } });
+  it('«Сжать…» takes the size of Hub\'s form; its end says what it became', async () => {
+    const { deps, started, emitted, events, job } = fakeDeps();
+    expect((await objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 10 } })).message).toBe('Сжимаю «clip.mp4»…');
     expect(started[0]).toEqual({ path: FILE, op: 'compress', params: { mode: 'size', targetMB: 10 } });
-    expect(answer.message).toBe('Готово «clip (Quadro).mp4»: 9,6 МБ, было 31 МБ — в папке «v»');
+    events.seen(job({ state: 'done', progress: 1, outPath: 'D:\\v\\clip (Quadro).mp4', inSize: 31 * MB, outSize: 9.6 * MB }));
+    expect(emitted.at(-1)).toEqual({ name: 'job.done', data: { jobId: 'job-1', message: 'Готово «clip (Quadro).mp4»: 9,6 МБ, было 31 МБ — в папке «v»', kind: 'success' } });
   });
 
-  it('«Вытащить звук в mp3»', async () => {
-    const { deps, started } = fakeDeps({ outPath: 'D:\\v\\clip (Quadro).mp3', outSize: 900 * 1024 });
-    expect((await objectAction(deps, 'actAudio', { object: fileObject(), values: {} })).message).toBe('Готово «clip (Quadro).mp3»: 900 КБ — в папке «v»');
-    expect(started[0]).toEqual({ path: FILE, op: 'extractAudio', params: { to: 'mp3' } });
+  it('«Вытащить звук в mp3»; a failed job and a cancelled one end with job.failed', async () => {
+    const a = fakeDeps();
+    await objectAction(a.deps, 'actAudio', { object: fileObject(), values: {} });
+    expect(a.started[0]).toEqual({ path: FILE, op: 'extractAudio', params: { to: 'mp3' } });
+    a.events.seen(a.job({ state: 'failed', error: 'В файле нет звука' }));
+    expect(a.emitted.at(-1)).toEqual({ name: 'job.failed', data: { jobId: 'job-1', message: 'В файле нет звука' } });
+    const b = fakeDeps();
+    await objectAction(b.deps, 'actMute', { object: fileObject(), values: {} });
+    b.events.seen(b.job({ state: 'cancelled' }));
+    expect(b.emitted.at(-1)).toEqual({ name: 'job.failed', data: { jobId: 'job-1', message: 'Отменено' } });
   });
 
-  it('a long job answers at once and goes on: the result is in «Готовое»', async () => {
-    const { deps, waited } = fakeDeps(null);
-    expect((await objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 25 } })).message).toBe(
-      'Сжимаю «clip.mp4» — готовый файл будет во вкладке «Готовое» Конвертера',
-    );
-    expect(waited).toEqual([BUDGET_MS]);
+  it('a job already over when followed is told at once', () => {
+    const emitted: string[] = [];
+    const events = new JobEvents((name) => emitted.push(name));
+    events.follow('j', { op: 'compress', title: 'a.mp4' }, { id: 'j', path: 'a.mp4', op: 'compress', state: 'done', progress: 1 });
+    expect(emitted).toEqual(['job.done']);
   });
 
-  it('a failed job is the error the person sees; a cancelled one says so', async () => {
-    await expect(objectAction(fakeDeps({ state: 'failed', error: 'Файл уже сжат, меньше не получится' }).deps, 'actCompress', { object: fileObject(), values: { targetMB: 10 } })).rejects.toThrow('Файл уже сжат');
-    expect((await objectAction(fakeDeps({ state: 'cancelled' }).deps, 'actMute', { object: fileObject(), values: {} })).message).toBe('Отменено');
+  it('jobs of the screen (not followed) give no job.* events', () => {
+    const emitted: string[] = [];
+    new JobEvents((name) => emitted.push(name)).seen({ id: 'x', path: 'a.mp4', op: 'convert', state: 'done', progress: 1 });
+    expect(emitted).toEqual([]);
   });
 
-  it('refuses what is not a video file with a path, a size outside the form, and methods it does not have', async () => {
-    const { deps, started } = fakeDeps({});
+  it('refuses what is not a file with a path, a size outside the form, and methods it does not have', async () => {
+    const { deps, started } = fakeDeps();
     await expect(objectAction(deps, 'actMute', { object: { kind: 'person', id: 'u1', title: 'Аня' }, values: {} })).rejects.toThrow('с файлом');
     await expect(objectAction(deps, 'actMute', { object: { ...fileObject(), path: undefined }, values: {} })).rejects.toThrow('с файлом');
-    await expect(objectAction(deps, 'actMute', { object: fileObject('C:\\x\\song.mp3'), values: {} })).rejects.toThrow('для видео');
     await expect(objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 0 } })).rejects.toThrow('от 1 до 4000 МБ');
     await expect(objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 'много' } })).rejects.toThrow('от 1 до 4000 МБ');
     await expect(objectAction(deps, 'actDelete', { object: fileObject(), values: {} })).rejects.toThrow('Нет такого действия');
@@ -78,43 +87,36 @@ describe('actions over a video of Hub', () => {
   });
 });
 
-describe('«/compress» in personal messages', () => {
-  it('the person picks a video; the reply is a notice of the chat, the wait counts the time in Windows\' window', async () => {
-    const { deps, started, waited } = fakeDeps({ outPath: 'C:\\v\\trip (Quadro).mp4', inSize: 40 * MB, outSize: 9.8 * MB }, ['C:\\v\\trip.mp4']);
+describe('«/сжать» in personal messages', () => {
+  it('the person picks a video; the answer is pending (and the chat\'s reply for an older Hub); the end adds the hint to drag it', async () => {
+    const { deps, started, emitted, events, job } = fakeDeps(['C:\\v\\trip.mp4']);
     const answer = await chatCompress(deps, { command: 'compress', values: { targetMB: 10 }, where: { kind: 'dm', conversationId: 'c1' } });
     expect(started[0]).toEqual({ path: 'C:\\v\\trip.mp4', op: 'compress', params: { mode: 'size', targetMB: 10 } });
-    expect(waited).toEqual([BUDGET_MS - 15_000]);
-    expect(answer).toEqual({ type: 'reply', body: 'Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v». Перетащите файл в беседу' });
+    expect(answer).toEqual({
+      pending: 'job-1',
+      message: 'Сжимаю «trip.mp4»…',
+      type: 'reply',
+      body: 'Сжимаю «trip.mp4» до 10 МБ — файл появится рядом с исходным и во вкладке «Готовое» Конвертера',
+    });
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4', inSize: 40 * MB, outSize: 9.8 * MB }));
+    expect(emitted.at(-1)!.data.message).toBe('Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v». Перетащите файл в беседу');
   });
 
   it('Windows\' window closed without a file — nothing is said', async () => {
-    const { deps, started } = fakeDeps({}, []);
+    const { deps, started } = fakeDeps([]);
     expect(await chatCompress(deps, { values: { targetMB: 10 } })).toEqual({ type: 'ack' });
     expect(started).toEqual([]);
-  });
-
-  it('a long one — «Сжимаю…», without the hint to drag a file that is not there yet', async () => {
-    const { deps } = fakeDeps(null, ['C:\\v\\trip.mp4']);
-    expect(await chatCompress(deps, { values: {} })).toEqual({ type: 'reply', body: 'Сжимаю «trip.mp4» — готовый файл будет во вкладке «Готовое» Конвертера' });
   });
 });
 
 describe('helpers', () => {
-  it('objectFile keeps only a file with a path; targetOf defaults to 10 МБ', () => {
+  it('objectFile keeps only a file with a path; targetOf defaults to 10 МБ; sizes in words', () => {
     expect(objectFile({ object: fileObject(), values: { targetMB: 5 } })).toEqual({ path: FILE, title: 'clip.mp4', values: { targetMB: 5 } });
     expect(targetOf({})).toBe(10);
     expect(sizeText(512)).toBe('1 КБ');
     expect(sizeText(250 * MB)).toBe('250 МБ');
-  });
-
-  it('JobWaiter: the end of a job, a job already over, and the time running out', async () => {
-    const waiter = new JobWaiter();
-    const job = (state: Job['state']): Job => ({ id: 'j', path: FILE, op: 'compress', state, progress: 0 });
-    const waiting = waiter.finished('j', 1_000);
-    waiter.seen(job('running'));
-    waiter.seen(job('done'));
-    expect((await waiting)?.state).toBe('done');
-    expect((await waiter.finished('j', 1_000, job('failed')))?.state).toBe('failed');
-    expect(await waiter.finished('k', 5)).toBeNull();
+    expect(doneLine({ id: 'j', path: 'a.mp3', op: 'extractAudio', state: 'done', progress: 1, outPath: 'D:\\m\\a (Quadro).mp3', outSize: 900 * 1024 }, { op: 'extractAudio', title: 'a.mp4' })).toBe(
+      'Готово «a (Quadro).mp3»: 900 КБ — в папке «m»',
+    );
   });
 });
