@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatCompress, doneLine, JobEvents, objectAction, objectFile, sizeText, targetOf, type ActionDeps } from '../pc/actions';
+import { chatCompress, doneLine, JobEvents, objectAction, objectFile, sizeText, targetOf, type ActionDeps, type Uploader } from '../pc/actions';
 import type { Item, Job } from '../pc/engine';
 
 // The actions over a video of Hub (shell.objectAction@1, run «pc») and «/сжать» in personal messages: what the part asks the
@@ -9,10 +9,10 @@ const MB = 1024 * 1024;
 const FILE = 'C:\\Users\\me\\Downloads\\Quadro Hub\\clip.mp4';
 const fileObject = (path = FILE) => ({ kind: 'file', id: '/api/files/1', title: 'clip.mp4', facts: { mime: 'video/mp4' }, url: '/api/files/1', path });
 
-function fakeDeps(picked: string[] = []) {
+function fakeDeps(picked: string[] = [], uploader?: Uploader) {
   const started: Item[] = [];
   const emitted: Array<{ name: string; data: Record<string, unknown> }> = [];
-  const events = new JobEvents((name, data) => emitted.push({ name, data }));
+  const events = new JobEvents((name, data) => emitted.push({ name, data }), uploader);
   const deps: ActionDeps = {
     start: async (items) => {
       started.push(...items);
@@ -102,13 +102,59 @@ describe('actions over a video of Hub', () => {
 });
 
 describe('«/сжать» in personal messages', () => {
-  it('the person picks a video; one answer — pending with the size; the end adds the hint to drag it', async () => {
+  it('the person picks a video; one answer — pending with the size; with no way to upload, the end adds the hint to drag it', async () => {
     const { deps, started, emitted, events, job } = fakeDeps(['C:\\v\\trip.mp4']);
     const answer = await chatCompress(deps, { command: 'compress', values: { targetMB: 10 }, where: { kind: 'dm', conversationId: 'c1' } });
     expect(started[0]).toEqual({ path: 'C:\\v\\trip.mp4', op: 'compress', params: { mode: 'size', targetMB: 10 } });
     expect(answer).toEqual({ pending: 'job-1', message: 'Сжимаю «trip.mp4» до 10 МБ…' });
     events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4', inSize: 40 * MB, outSize: 9.8 * MB }));
     expect(emitted.at(-1)!.data.message).toBe('Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v». Перетащите файл в беседу');
+  });
+
+  it('the result goes to Hub as the person\'s file: «Отправляю…» at 99 %, then job.done with its fileId and picture size', async () => {
+    const sent: string[] = [];
+    const uploader: Uploader = {
+      upload: async (path) => {
+        sent.push(path);
+        return { fileId: 'f-77' };
+      },
+      measure: async () => ({ width: 1280, height: 720 }),
+    };
+    const { deps, emitted, events, job } = fakeDeps(['C:\\v\\trip.mp4'], uploader);
+    await chatCompress(deps, { values: { targetMB: 10 } });
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4', inSize: 40 * MB, outSize: 9.8 * MB }));
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4' })); // told once
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(['C:\\v\\trip (Quadro).mp4']);
+    expect(emitted.slice(-2)).toEqual([
+      { name: 'job.progress', data: { jobId: 'job-1', percent: 99, message: 'Отправляю «trip (Quadro).mp4» в беседу' } },
+      { name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v»', kind: 'success', files: [{ fileId: 'f-77', width: 1280, height: 720 }] } },
+    ]);
+  });
+
+  it('no picture size (ffprobe failed) — the file goes anyway; the upload refused — the line says why; an old program — the hint', async () => {
+    const end = async (uploader: Uploader) => {
+      const { deps, emitted, events, job } = fakeDeps(['C:\\v\\trip.mp4'], uploader);
+      await chatCompress(deps, { values: { targetMB: 10 } });
+      events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4', outSize: 2 * MB }));
+      await new Promise((r) => setTimeout(r, 0));
+      return emitted.at(-1)!;
+    };
+    expect((await end({ upload: async () => ({ fileId: 'f-1' }), measure: async () => Promise.reject(new Error('ffprobe')) })).data.files).toEqual([{ fileId: 'f-1' }]);
+    const refused = await end({ upload: async () => Promise.reject(new Error('Нет места в ваших файлах: свободно 1 МБ')) });
+    expect(refused).toEqual({ name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Файл не отправился: Нет места в ваших файлах: свободно 1 МБ', kind: 'success' } });
+    const old = await end({ upload: async () => Promise.reject(new Error('Нет такого действия: files.upload')) });
+    expect(old.data).toEqual({ jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Перетащите файл в беседу', kind: 'success' });
+  });
+
+  it('the actions over a file of Hub never upload their result (it already lies in «Загрузки»)', async () => {
+    const sent: string[] = [];
+    const { deps, emitted, events, job } = fakeDeps([], { upload: async (p) => (sent.push(p), { fileId: 'x' }) });
+    await objectAction(deps, 'actCompress', { object: fileObject(), values: { targetMB: 8 } });
+    events.seen(job({ state: 'done', progress: 1, outPath: 'C:\\d\\clip (Quadro).mp4', outSize: MB }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual([]);
+    expect(emitted.at(-1)!.data.files).toBeUndefined();
   });
 
   it('Windows\' window closed without a file — nothing is said', async () => {

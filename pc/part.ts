@@ -6,7 +6,7 @@ import { ConvertEngine, type EngineFiles, type Item, type Job } from './engine';
 // «Конвертер»'s part on the PC, a package of the catalog like any author's (docs/apps/convert.md): FFmpeg is its download
 // (manifest `parts.pc.downloads`, unpack: 'zip' — the program fetches, checks and unpacks it at «Поставить»); the person's files
 // come through the program (pc.files.pick / reveal / open), its programs are its own (pc.process). Besides its screen it answers
-// the actions over videos of Hub and «/compress» in personal messages (actions.ts).
+// the actions over videos of Hub and «/сжать» in personal messages, whose result it sends to Hub as the person's file (actions.ts).
 
 export const CONVERT_METHODS = ['status', 'install', 'probe', 'pickFiles', 'pickFolder', 'start', 'cancel', 'list', 'reveal', 'open', 'settings', 'setSettings', ...Object.keys(OBJECT_ACTIONS), 'chatCompress'] as const;
 
@@ -53,8 +53,15 @@ export function engineFiles(host: Pick<PartHostApi, 'files'>): EngineFiles {
 
 async function main(): Promise<void> {
   const host = await connect();
-  // The jobs started by an action or «/сжать»: Hub follows them by the part's events job.* (kernel.md §12ж).
-  const events = new JobEvents((name, data) => host.events.emit(name, data));
+  // The jobs started by an action or «/сжать»: Hub follows them by the part's events job.* (kernel.md §12ж); the result of
+  // «/сжать» goes to Hub as the person's file (pc.files.upload) with its picture's size (ffprobe).
+  const events = new JobEvents((name, data) => host.events.emit(name, data), {
+    upload: (path) => host.files.upload(path),
+    measure: async (path) => {
+      const p = await engine.probe(path);
+      return { width: p.width, height: p.height };
+    },
+  });
   const engine = new ConvertEngine({
     dataDir: host.app.dataDir,
     bin: join(host.app.download(FFMPEG.download, { unpacked: true }), ...FFMPEG.bin.split('/')),

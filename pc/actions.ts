@@ -7,7 +7,9 @@ import type { Item, Job, Op } from './engine';
 //  - «/сжать» in personal messages (servers.command@1, handler «pc:»): the person picks the video in Windows' own window.
 // The program waits for a call at most 60 s, so the part answers at once `{ pending: jobId, message }` and tells the rest by its
 // events with that jobId: `job.progress { percent, message }`, then `job.done { message, kind }` or `job.failed { message }` —
-// Hub keeps the notice with the percent until the end (JobEvents).
+// Hub keeps the notice with the percent until the end (JobEvents). The end of «/сжать» carries the result itself: the part sends
+// it to Hub as the person's file (host.files.upload, pc-host.md §6.20) and `job.done` gets `files: [{ fileId, width?, height? }]` —
+// Hub puts the line and the file into the person's conversation with «Конвертер».
 
 /** Videos «/сжать» lets the person pick and «Открыть с помощью» brings (the actions take the same). */
 export const VIDEO_EXT = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'flv', 'wmv'] as const;
@@ -24,9 +26,24 @@ const WORK: Record<Work, string> = { removeAudio: 'Убираю звук', compr
 export interface Followed {
   op: Work;
   title: string;
-  /** Said after «Готово …» (the chat: «Перетащите файл в беседу»). */
+  /** Said after «Готово …». */
   tail?: string;
+  /** The result goes to the person's conversation with the app as a file (pc.files.upload); a program without it — the hint to drag it. */
+  upload?: boolean;
 }
+
+/** The program sends a result to Hub as the person's file; ffprobe tells its picture's size (Hub shows the video at once). */
+export interface Uploader {
+  upload(path: string): Promise<{ fileId: string }>;
+  measure?(path: string): Promise<{ width?: number; height?: number }>;
+}
+
+/** The end of «/сжать» when the file cannot go by itself (a program before files.upload). */
+export const DRAG_TAIL = '. Перетащите файл в беседу';
+/** A program that has no such call answers so (a program before 1.0.106). */
+const NO_CALL = /Нет такого действия/i;
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').trim().slice(0, 200) || 'ошибка';
 
 export interface ActionDeps {
   start(items: Item[]): Promise<{ ids: string[] }>;
@@ -82,7 +99,10 @@ export const workLine = (f: Followed) => `${WORK[f.op]} «${f.title}»`;
  */
 export class JobEvents {
   private readonly followed = new Map<string, Followed & { percent: number }>();
-  constructor(private readonly emit: (name: 'job.progress' | 'job.done' | 'job.failed', data: Record<string, unknown>) => void) {}
+  constructor(
+    private readonly emit: (name: 'job.progress' | 'job.done' | 'job.failed', data: Record<string, unknown>) => void,
+    private readonly uploader?: Uploader,
+  ) {}
 
   follow(id: string, f: Followed, now?: Job): void {
     this.followed.set(id, { ...f, percent: -1 });
@@ -100,8 +120,33 @@ export class JobEvents {
       return;
     }
     this.followed.delete(job.id);
-    if (job.state === 'done') this.emit('job.done', { jobId: job.id, message: doneLine(job, f), kind: 'success' });
-    else this.emit('job.failed', { jobId: job.id, message: job.state === 'cancelled' ? 'Отменено' : job.error || 'Не удалось обработать файл' });
+    if (job.state !== 'done') {
+      this.emit('job.failed', { jobId: job.id, message: job.state === 'cancelled' ? 'Отменено' : job.error || 'Не удалось обработать файл' });
+      return;
+    }
+    if (f.upload) void this.sendResult(job, f);
+    else this.emit('job.done', { jobId: job.id, message: doneLine(job, f), kind: 'success' });
+  }
+
+  /**
+   * The result to the person's conversation: uploaded first (Hub's notice says so at 99 %), then `job.done` with its file. A program
+   * without files.upload — the line with the hint to drag it; the upload failed — the line says why (the file stays in its folder).
+   */
+  private async sendResult(job: Job, f: Followed): Promise<void> {
+    const done = (tail: string, files?: Array<Record<string, unknown>>) =>
+      this.emit('job.done', { jobId: job.id, message: doneLine(job, { ...f, tail: `${f.tail ?? ''}${tail}` }), kind: 'success', ...(files ? { files } : {}) });
+    const path = job.outPath;
+    if (!this.uploader || !path) return done(DRAG_TAIL);
+    this.emit('job.progress', { jobId: job.id, percent: 99, message: `Отправляю «${basename(path)}» в беседу` });
+    try {
+      const [file, size] = await Promise.all([this.uploader.upload(path), this.uploader.measure ? this.uploader.measure(path).catch(() => ({})) : Promise.resolve({})]);
+      const { width, height } = size as { width?: unknown; height?: unknown };
+      const picture = typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0 ? { width, height } : {};
+      done('', [{ fileId: file.fileId, ...picture }]);
+    } catch (e) {
+      const why = errorText(e);
+      done(NO_CALL.test(why) ? DRAG_TAIL : `. Файл не отправился: ${why}`);
+    }
   }
 }
 
@@ -134,7 +179,7 @@ export async function objectAction(deps: ActionDeps, method: string, params: unk
 
 /**
  * «/сжать» in a personal conversation: the person picks the video (Windows' window), it is compressed next to the original.
- * The answer is Hub's `{ pending, message }`, its end comes as `job.done`. The window closed without a file — `{ type: 'ack' }`,
+ * The answer is Hub's `{ pending, message }`, its end comes as `job.done` with the result uploaded as the person's file. The window closed without a file — `{ type: 'ack' }`,
  * nothing is shown.
  */
 export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{ pending: string; message: string } | { type: 'ack' }> {
@@ -144,5 +189,5 @@ export async function chatCompress(deps: ActionDeps, params: unknown): Promise<{
   const [path] = await deps.pick();
   if (!path) return { type: 'ack' };
   const title = basename(path);
-  return startFollowed(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, { op: 'compress', title, tail: '. Перетащите файл в беседу' }, `Сжимаю «${title}» до ${targetMB} МБ…`);
+  return startFollowed(deps, { path, op: 'compress', params: { mode: 'size', targetMB } }, { op: 'compress', title, upload: true }, `Сжимаю «${title}» до ${targetMB} МБ…`);
 }
