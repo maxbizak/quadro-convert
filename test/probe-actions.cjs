@@ -50,9 +50,17 @@ module.exports = async (probe) => {
     seen = new Set((await toasts()) || []);
   };
   // The menu of one file: `pick` — JavaScript giving its «Открыть с помощью» button (the video's player, or the n-th sound).
+  // An open menu closes by Escape on the menu itself (the shell's menus listen there, not on <body>); waited until it is gone.
+  const closeMenus = async () => {
+    for (let i = 0; i < 5; i++) {
+      if (!(await js(`document.querySelectorAll('[role="menu"]').length`))) return;
+      await js(`(() => { const m = [...document.querySelectorAll('[role="menu"]')].at(-1); (m || document.body).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); })()`);
+      await wait(300);
+    }
+    if (await js(`document.querySelectorAll('[role="menu"]').length`)) throw new Error('меню не закрылось');
+  };
   const menuOf = async (pick) => {
-    await js(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-    await wait(300);
+    await closeMenus();
     await until(`!!(${pick})`, 60000);
     await js(`(${pick}).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }))`);
     await until(`document.querySelectorAll('[role="menuitem"]').length > 0`, 10000);
@@ -147,7 +155,7 @@ module.exports = async (probe) => {
   }
   if (!again.some((t) => /^Повторить: Сжать/.test(t))) throw new Error('нет «Повторить: Сжать…»: ' + JSON.stringify(again));
   await shot('cv-relaunch.png');
-  await js(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await closeMenus();
 
   // The sounds (match.mime «audio/*»): «Перевести в mp3» — the ogg becomes an mp3, the mp3 stays as it is; no video actions.
   const oggMenu = await menuOf(soundButton(1));

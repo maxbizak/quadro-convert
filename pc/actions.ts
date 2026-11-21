@@ -9,7 +9,8 @@ import type { Item, Job, Op } from './engine';
 // events with that jobId: `job.progress { percent, message }`, then `job.done { message, kind }` or `job.failed { message }` —
 // Hub keeps the notice with the percent until the end (JobEvents). The end of «/сжать» carries the result itself: the part sends
 // it to Hub as the person's file (host.files.upload, pc-host.md §6.20) and `job.done` gets `files: [{ fileId, width?, height? }]` —
-// Hub puts the line and the file into the person's conversation with «Конвертер».
+// Hub puts the line and the file into the person's conversation with «Конвертер». Under it — «Показать в папке», a button of the
+// person's own PC (servers.interaction@1 `pc: ['revealResult']`, docs/v2/dm-apps.md): the press comes to this part with the job's id.
 
 /** Videos «/сжать» lets the person pick and «Открыть с помощью» brings (the actions take the same). */
 export const VIDEO_EXT = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'flv', 'wmv'] as const;
@@ -37,6 +38,12 @@ export interface Uploader {
   upload(path: string): Promise<{ fileId: string }>;
   measure?(path: string): Promise<{ width?: number; height?: number }>;
 }
+
+/** The method of the button «Показать в папке» (declared in servers.interaction@1 of the manifest). */
+export const REVEAL_METHOD = 'revealResult';
+
+/** «Показать в папке» under the result: the job's id only (a button's values are short, a path may not fit). */
+export const revealButton = (jobId: string) => [{ type: 'row', items: [{ type: 'button', id: 'reveal', label: 'Показать в папке', style: 'secondary', pc: REVEAL_METHOD, args: { jobId } }] }];
 
 /** The end of «/сжать» when the file cannot go by itself (a program before files.upload). */
 export const DRAG_TAIL = '. Перетащите файл в беседу';
@@ -133,9 +140,15 @@ export class JobEvents {
    * without files.upload — the line with the hint to drag it; the upload failed — the line says why (the file stays in its folder).
    */
   private async sendResult(job: Job, f: Followed): Promise<void> {
-    const done = (tail: string, files?: Array<Record<string, unknown>>) =>
-      this.emit('job.done', { jobId: job.id, message: doneLine(job, { ...f, tail: `${f.tail ?? ''}${tail}` }), kind: 'success', ...(files ? { files } : {}) });
     const path = job.outPath;
+    const done = (tail: string, files?: Array<Record<string, unknown>>) =>
+      this.emit('job.done', {
+        jobId: job.id,
+        message: doneLine(job, { ...f, tail: `${f.tail ?? ''}${tail}` }),
+        kind: 'success',
+        ...(files ? { files } : {}),
+        ...(path ? { components: revealButton(job.id) } : {}),
+      });
     if (!this.uploader || !path) return done(DRAG_TAIL);
     this.emit('job.progress', { jobId: job.id, percent: 99, message: `Отправляю «${basename(path)}» в беседу` });
     try {
@@ -147,6 +160,24 @@ export class JobEvents {
       const why = errorText(e);
       done(NO_CALL.test(why) ? DRAG_TAIL : `. Файл не отправился: ${why}`);
     }
+  }
+}
+
+/**
+ * «Показать в папке» under a result in the conversation with «Конвертер»: its job from the history of the jobs, the folder opened with
+ * the file selected (pc.files.reveal). Nothing to say when it worked — the folder is the answer.
+ */
+export async function revealResult(deps: { list(): Job[]; reveal(path: string): Promise<void> }, params: unknown): Promise<{ type: 'ack' } | { message: string; kind: 'error' }> {
+  const p = params && typeof params === 'object' ? (params as { args?: unknown }) : {};
+  const args = p.args && typeof p.args === 'object' ? (p.args as { jobId?: unknown }) : {};
+  const jobId = typeof args.jobId === 'string' ? args.jobId : '';
+  const job = jobId ? deps.list().find((j) => j.id === jobId) : undefined;
+  if (!job?.outPath) return { message: 'Этого файла уже нет в истории Конвертера — откройте вкладку «Готовое»', kind: 'error' };
+  try {
+    await deps.reveal(job.outPath);
+    return { type: 'ack' };
+  } catch (e) {
+    return { message: `Не открыть папку с «${basename(job.outPath)}»: ${errorText(e)}`, kind: 'error' };
   }
 }
 

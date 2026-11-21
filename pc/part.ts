@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { connect, type PartHostApi } from '@quadrohub/pc-sdk';
-import { chatCompress, JobEvents, objectAction, OBJECT_ACTIONS, VIDEO_EXT, type ActionDeps } from './actions';
+import { chatCompress, JobEvents, objectAction, OBJECT_ACTIONS, REVEAL_METHOD, revealResult, VIDEO_EXT, type ActionDeps } from './actions';
 import { ConvertEngine, type EngineFiles, type Item, type Job } from './engine';
 
 // «Конвертер»'s part on the PC, a package of the catalog like any author's (docs/apps/convert.md): FFmpeg is its download
@@ -8,7 +8,7 @@ import { ConvertEngine, type EngineFiles, type Item, type Job } from './engine';
 // come through the program (pc.files.pick / reveal / open), its programs are its own (pc.process). Besides its screen it answers
 // the actions over videos of Hub and «/сжать» in personal messages, whose result it sends to Hub as the person's file (actions.ts).
 
-export const CONVERT_METHODS = ['status', 'install', 'probe', 'pickFiles', 'pickFolder', 'start', 'cancel', 'list', 'reveal', 'open', 'settings', 'setSettings', ...Object.keys(OBJECT_ACTIONS), 'chatCompress'] as const;
+export const CONVERT_METHODS = ['status', 'install', 'probe', 'pickFiles', 'pickFolder', 'start', 'cancel', 'list', 'reveal', 'open', 'settings', 'setSettings', ...Object.keys(OBJECT_ACTIONS), 'chatCompress', REVEAL_METHOD] as const;
 
 /** FFmpeg of its manifest: the download's id and where its programs lie in the unpacked archive. */
 export const FFMPEG = { download: 'ffmpeg', version: '9.0.2', bin: 'ffmpeg-9.0.2-essentials_build/bin' } as const;
@@ -39,6 +39,8 @@ export function serveConvert(host: Pick<PartHostApi, 'rpc' | 'files' | 'lifecycl
   };
   for (const method of Object.keys(OBJECT_ACTIONS)) host.rpc.handle(method, (x) => objectAction(deps, method, x));
   host.rpc.handle('chatCompress', (x) => chatCompress(deps, x));
+  // «Показать в папке» under the result of «/сжать» in the conversation with «Конвертер» (a button of this PC, args { jobId }).
+  host.rpc.handle(REVEAL_METHOD, (x) => revealResult({ list: () => engine.list(), reveal: (path) => host.files.reveal(path) }, x));
   host.lifecycle.onStop(() => engine.stop());
 }
 

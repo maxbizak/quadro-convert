@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatCompress, doneLine, JobEvents, objectAction, objectFile, sizeText, targetOf, type ActionDeps, type Uploader } from '../pc/actions';
+import { chatCompress, doneLine, JobEvents, objectAction, objectFile, REVEAL_METHOD, revealButton, revealResult, sizeText, targetOf, type ActionDeps, type Uploader } from '../pc/actions';
 import type { Item, Job } from '../pc/engine';
 
 // The actions over a video of Hub (shell.objectAction@1, run «pc») and «/сжать» in personal messages: what the part asks the
@@ -7,6 +7,8 @@ import type { Item, Job } from '../pc/engine';
 
 const MB = 1024 * 1024;
 const FILE = 'C:\\Users\\me\\Downloads\\Quadro Hub\\clip.mp4';
+/** «Показать в папке» under the result of job-1. */
+const REVEAL = revealButton('job-1');
 const fileObject = (path = FILE) => ({ kind: 'file', id: '/api/files/1', title: 'clip.mp4', facts: { mime: 'video/mp4' }, url: '/api/files/1', path });
 
 function fakeDeps(picked: string[] = [], uploader?: Uploader) {
@@ -128,7 +130,7 @@ describe('«/сжать» in personal messages', () => {
     expect(sent).toEqual(['C:\\v\\trip (Quadro).mp4']);
     expect(emitted.slice(-2)).toEqual([
       { name: 'job.progress', data: { jobId: 'job-1', percent: 99, message: 'Отправляю «trip (Quadro).mp4» в беседу' } },
-      { name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v»', kind: 'success', files: [{ fileId: 'f-77', width: 1280, height: 720 }] } },
+      { name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 9,8 МБ, было 40 МБ — в папке «v»', kind: 'success', files: [{ fileId: 'f-77', width: 1280, height: 720 }], components: REVEAL } },
     ]);
   });
 
@@ -142,9 +144,24 @@ describe('«/сжать» in personal messages', () => {
     };
     expect((await end({ upload: async () => ({ fileId: 'f-1' }), measure: async () => Promise.reject(new Error('ffprobe')) })).data.files).toEqual([{ fileId: 'f-1' }]);
     const refused = await end({ upload: async () => Promise.reject(new Error('Нет места в ваших файлах: свободно 1 МБ')) });
-    expect(refused).toEqual({ name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Файл не отправился: Нет места в ваших файлах: свободно 1 МБ', kind: 'success' } });
+    expect(refused).toEqual({ name: 'job.done', data: { jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Файл не отправился: Нет места в ваших файлах: свободно 1 МБ', kind: 'success', components: REVEAL } });
     const old = await end({ upload: async () => Promise.reject(new Error('Нет такого действия: files.upload')) });
-    expect(old.data).toEqual({ jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Перетащите файл в беседу', kind: 'success' });
+    expect(old.data).toEqual({ jobId: 'job-1', message: 'Готово «trip (Quadro).mp4»: 2 МБ — в папке «v». Перетащите файл в беседу', kind: 'success', components: REVEAL });
+  });
+
+  it('«Показать в папке» (a button of this PC, args { jobId }): the job of the history, its result shown in its folder; quiet when it worked', async () => {
+    const jobs: Job[] = [{ id: 'job-9', path: 'C:\\v\\trip.mp4', op: 'compress', state: 'done', progress: 1, outPath: 'C:\\v\\trip (Quadro).mp4' }];
+    const shown: string[] = [];
+    const deps = { list: () => jobs, reveal: async (path: string) => void shown.push(path) };
+    expect(await revealResult(deps, { messageId: 'm1', componentId: 'reveal', args: { jobId: 'job-9' }, where: { kind: 'dm', conversationId: 'c1' } })).toEqual({ type: 'ack' });
+    expect(shown).toEqual(['C:\\v\\trip (Quadro).mp4']);
+    // A job the history no longer has, a press without its id, a folder the program could not open — said in words.
+    expect(await revealResult(deps, { args: { jobId: 'job-0' } })).toEqual({ message: 'Этого файла уже нет в истории Конвертера — откройте вкладку «Готовое»', kind: 'error' });
+    expect(await revealResult(deps, {})).toMatchObject({ kind: 'error' });
+    const refused = await revealResult({ list: () => jobs, reveal: async () => Promise.reject(new Error('Файл переместили или удалили')) }, { args: { jobId: 'job-9' } });
+    expect(refused).toEqual({ message: 'Не открыть папку с «trip (Quadro).mp4»: Файл переместили или удалили', kind: 'error' });
+    // The button Hub checks: a pc button of a declared method with short values only.
+    expect(REVEAL).toEqual([{ type: 'row', items: [{ type: 'button', id: 'reveal', label: 'Показать в папке', style: 'secondary', pc: REVEAL_METHOD, args: { jobId: 'job-1' } }] }]);
   });
 
   it('the actions over a file of Hub never upload their result (it already lies in «Загрузки»)', async () => {
