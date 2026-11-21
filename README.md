@@ -58,7 +58,7 @@ HUB_DEV_PACKAGES="<путь к этой папке>" node scripts/dev.mjs --addr
 ## Выпуск из CI (с 1.2.3)
 
 Тег `v<версия>` (та же, что в `manifest.json`) запускает `.github/workflows/release.yml` в github.com/maxbizak/quadro-convert:
-`npm ci`, сборка, `qhapp-1.0.6.mjs` со сверкой sha256 и `ci-publish dist --hub https://quadro-metaverse.site`. Ключей нет ни в
+`npm ci`, сборка, `qhapp-1.0.10.mjs` со сверкой sha256 и `ci-publish dist --hub https://quadro-metaverse.site`. Ключей нет ни в
 репозитории, ни в секретах: Hub меняет токен GitHub на сертификат на час. В Каталоге у версии — «Собрано из
 github.com/maxbizak/quadro-convert@…». Доверие workflow — «Каталог → Опубликовать → Выпуск из CI». Ручная подпись ниже —
 запасной путь.

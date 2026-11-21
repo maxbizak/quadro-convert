@@ -1,4 +1,5 @@
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
@@ -9,13 +10,21 @@ import { defineConfig, type Plugin } from 'vite';
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
-/** dist/manifest.json next to dist/client/: the folder is the whole package. */
+/** The package's icon (kernel.md §12н): `icon` a path of an SVG or PNG in the package — copied to dist/ at the same path. */
+function copyIcon(m: { icon?: unknown }): void {
+  if (typeof m.icon !== 'string' || !/\.(svg|png)$/i.test(m.icon)) return;
+  mkdirSync(dirname(here(`./dist/${m.icon}`)), { recursive: true });
+  copyFileSync(here(`./${m.icon}`), here(`./dist/${m.icon}`));
+}
+
+/** dist/manifest.json next to dist/client/ (and the icon): the folder is the whole package. */
 function manifest(): Plugin {
   return {
     name: 'qhapp-manifest',
     closeBundle() {
       mkdirSync(here('./dist'), { recursive: true });
       copyFileSync(here('./manifest.json'), here('./dist/manifest.json'));
+      copyIcon(JSON.parse(readFileSync(here('./manifest.json'), 'utf8')) as { icon?: unknown });
     },
   };
 }
